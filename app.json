@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "CancioneroApp",
+    "slug": "CancioneroApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.mario.cancioneroapp"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "827684ad-d53c-4b1d-b159-d20d718cddb8"
+      }
+    }
+  }
+}

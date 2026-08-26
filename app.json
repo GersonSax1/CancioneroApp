@@ -3,10 +3,24 @@
     "name": "CancioneroApp",
     "slug": "CancioneroApp",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "La aplicación necesita acceso a tus fotos para cambiar el logo del coro."
+        }
+      ],
+      "expo-router",
+      "expo-splash-screen"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gerson.CarpetaIglesia",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.mario.cancioneroapp"
@@ -18,6 +32,12 @@
       "eas": {
         "projectId": "827684ad-d53c-4b1d-b159-d20d718cddb8"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/827684ad-d53c-4b1d-b159-d20d718cddb8"
     }
   }
 }

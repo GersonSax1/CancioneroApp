@@ -1,12 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Button, FlatList, Image, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Button, FlatList, Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 export default function App() {
@@ -14,28 +13,45 @@ export default function App() {
   const [himnarioActual, setHimnarioActual] = useState(null); 
   const [cancionActual, setCancionActual] = useState(null); 
   
+  const [cancionesPersonales, setCancionesPersonales] = useState([]);
+  const [verPersonales, setVerPersonales] = useState(false);
+
   const [favoritos, setFavoritos] = useState([]); 
   const [verSoloFavoritos, setVerSoloFavoritos] = useState(false);
   const [busqueda, setBusqueda] = useState(''); 
   const [tituloMoviendo, setTituloMoviendo] = useState(null); 
-  const [fontSize, setFontSize] = useState(18); 
+  const [fontSize, setFontSize] = useState(14); 
   
   const [modoEdicion, setModoEdicion] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [claveEntrada, setClaveEntrada] = useState('');
-  const [cargando, setCargando] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const [subiendoArchivo, setSubiendoArchivo] = useState(false);
   const [errorCritico, setErrorCritico] = useState(null);
 
-  // Estados para imágenes y control de scroll por índice exacto
   const [imagenAmpliada, setImagenAmpliada] = useState(null);
   const [modalLogoVisible, setModalLogoVisible] = useState(false);
   const [himnarioSeleccionadoLogo, setHimnarioSeleccionadoLogo] = useState(null);
   
-  // Estados para edición y creación de canciones manuales
   const [modalCancionVisible, setModalCancionVisible] = useState(false);
   const [tituloEditando, setTituloEditando] = useState('');
   const [letraEditando, setLetraEditando] = useState('');
   const [indiceEditando, setIndiceEditando] = useState(null);
+
+  const [modalRenombrarVisible, setModalRenombrarVisible] = useState(false);
+  const [himnarioSeleccionado, setHimnarioSeleccionado] = useState(null);
+  const [nuevoNombreHimnario, setNuevoNombreHimnario] = useState('');
+  const [nuevaClaveHimnario, setNuevaClaveHimnario] = useState('');
+
+  const [modalClaveCarpetaVisible, setModalClaveCarpetaVisible] = useState(false);
+  const [himnarioPendiente, setHimnarioPendiente] = useState(null);
+  const [claveCarpetaInput, setClaveCarpetaInput] = useState('');
+
+  const [tonoDelta, setTonoDelta] = useState(0);
+  const [mostrarSaludo, setMostrarSaludo] = useState(true);
+  const [verAcordes, setVerAcordes] = useState(true);
+  
+  const [menuFlotanteVisible, setMenuFlotanteVisible] = useState(false);
 
   const flatListRef = useRef(null);
   const [indiceUltimaCancion, setIndiceUltimaCancion] = useState(0);
@@ -43,59 +59,157 @@ export default function App() {
   const CLAVE_SECRETA = "alabanza2026"; 
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setMostrarSaludo(false);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     const accionRetroceso = () => {
       if (cancionActual) { setCancionActual(null); return true; }
       if (himnarioActual) { setHimnarioActual(null); setVerSoloFavoritos(false); setBusqueda(''); setTituloMoviendo(null); return true; }
+      if (verPersonales) { setVerPersonales(false); return true; } 
       return false; 
     };
     const manejadorRetroceso = BackHandler.addEventListener('hardwareBackPress', accionRetroceso);
     return () => manejadorRetroceso.remove();
-  }, [cancionActual, himnarioActual]);
+  }, [cancionActual, himnarioActual, verPersonales]);
 
   useEffect(() => {
-    const cargarFavoritos = async () => {
+    const cargarDatosLocalesIniciales = async () => {
       try {
         const favsGuardados = await AsyncStorage.getItem('favoritosLocales');
         if (favsGuardados) setFavoritos(JSON.parse(favsGuardados));
-      } catch (error) { console.log("Error al cargar favoritos", error); }
-    };
-    cargarFavoritos();
-  }, []);
 
-  useEffect(() => {
-    setCargando(true);
-    try {
-      const unsubscribe = onSnapshot(collection(db, 'himnarios'), (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setHimnarios(data);
-        if (himnarioActual) {
-          const actualizado = data.find(h => h.id === himnarioActual.id);
-          if (actualizado) setHimnarioActual(actualizado);
-        }
-        setCargando(false);
-      }, (error) => { 
+        const himnariosLocales = await AsyncStorage.getItem('himnariosLocales');
+        if (himnariosLocales) setHimnarios(JSON.parse(himnariosLocales));
+
+        const personalesGuardados = await AsyncStorage.getItem('cancionesPersonales');
+        if (personalesGuardados) setCancionesPersonales(JSON.parse(personalesGuardados));
+      } catch (error) { 
+      } finally {
         setCargando(false); 
-        setErrorCritico("Error de sincronización con la base de datos.");
-      });
+      }
+    };
+    cargarDatosLocalesIniciales();
+
+    try {
+      const unsubscribe = onSnapshot(collection(db, 'himnarios'), async (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (data.length > 0) {
+          setHimnarios(data);
+          await AsyncStorage.setItem('himnariosLocales', JSON.stringify(data));
+          if (himnarioActual) {
+            const actualizado = data.find(h => h.id === himnarioActual.id);
+            if (actualizado) setHimnarioActual(actualizado);
+          }
+        }
+      }, (error) => {});
       return () => unsubscribe();
-    } catch (e) {
-      setCargando(false);
-      setErrorCritico(e.message);
-    }
+    } catch (e) {}
   }, [himnarioActual?.id]);
 
-  // Al regresar de la canción, hacer scroll automático al índice exacto guardado
   useEffect(() => {
     if (!cancionActual && himnarioActual && flatListRef.current) {
       setTimeout(() => {
-        try {
-          flatListRef.current.scrollToIndex({ index: indiceUltimaCancion, animated: false });
-        } catch (error) {
-          // Si el índice excede el filtrado de búsqueda actual, se ignora de forma segura
-        }
+        try { flatListRef.current.scrollToIndex({ index: indiceUltimaCancion, animated: false }); } catch (error) {}
       }, 150);
     }
   }, [cancionActual]);
+
+  useEffect(() => {
+    setTonoDelta(0);
+    setVerAcordes(true);
+    setMenuFlotanteVisible(false);
+  }, [cancionActual]);
+
+  const transponerAcorde = (acordeOriginal, delta) => {
+    const transponerBasico = (notaBase) => {
+      const notasIngles = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const notasEspanol = ['Do', 'Do#', 'Re', 'Re#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
+      const equivalencias = {'Db': 'C#', 'Eb': 'D#', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#', 'Reb': 'Do#', 'Mib': 'Re#', 'Solb': 'Fa#', 'Lab': 'Sol#', 'Sib': 'La#'};
+
+      let match = notaBase.match(/^(Do|Re|Mi|Fa|Sol|La|Si)([#b]?)(.*)$/i) || notaBase.match(/^([CDEFGAB])([#b]?)(.*)$/i);
+      if (!match) return notaBase;
+      
+      let esEspanol = /^(Do|Re|Mi|Fa|Sol|La|Si)/i.test(match[1]);
+      let raiz = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+      let alteracion = match[2].toLowerCase();
+      let resto = match[3];
+
+      let notaCompleta = raiz + alteracion;
+      if (equivalencias[notaCompleta]) notaCompleta = equivalencias[notaCompleta];
+
+      const arregloNotas = esEspanol ? notasEspanol : notasIngles;
+      let index = arregloNotas.findIndex(n => n.toLowerCase() === notaCompleta.toLowerCase());
+
+      if (index === -1) return notaBase;
+
+      let nuevoIndex = (index + delta) % 12;
+      if (nuevoIndex < 0) nuevoIndex += 12;
+
+      return arregloNotas[nuevoIndex] + resto;
+    };
+
+    let acordeNuevo = "";
+    
+    if (acordeOriginal.includes('/')) {
+      let partes = acordeOriginal.split('/');
+      acordeNuevo = transponerBasico(partes[0]) + '/' + transponerBasico(partes[1]);
+    } else {
+      acordeNuevo = transponerBasico(acordeOriginal);
+    }
+
+    if (acordeNuevo.length < acordeOriginal.length) {
+        acordeNuevo += " ".repeat(acordeOriginal.length - acordeNuevo.length);
+    }
+    
+    return acordeNuevo;
+  };
+
+  const procesarLetraConAcordes = (texto, mostrarAcordes) => {
+    const lineas = texto.split('\n');
+    const chordRegex = /^((?:Do|Re|Mi|Fa|Sol|La|Si|C|D|E|F|G|A|B)[#b]?(?:m|maj|dim|aug|sus)?\d*(?:\/(?:Do|Re|Mi|Fa|Sol|La|Si|C|D|E|F|G|A|B)[#b]?)?)$/i;
+    const etiquetasPermitidas = /^(INTRO|INTRODUCCIÓN|INTRODUCCION|PUENTE|CORO|INTERLUDIO|FINAL|VERSO|ESTROFA|PARTE)[.:\-]?$/i;
+
+    const lineasProcesadas = lineas.map(linea => {
+        const palabras = linea.trim().split(/\s+/);
+        let cantidadAcordes = 0;
+
+        const esLineaAcordes = linea.trim().length > 0 && palabras.every(p => {
+            let pLimpia = p.replace(/^[\[\(\-¿¡]+|[\]\)\-\.:,!\?]+$/g, '');
+            
+            if (pLimpia === '' || p === '-' || p === '|' || p === '–' || p === '/') return true;
+            if (etiquetasPermitidas.test(pLimpia)) return true;
+            if (/^[xX]\d+$/.test(pLimpia)) return true;
+            if (/^[A-Z0-9]$/i.test(pLimpia) || /^\d+$/.test(pLimpia)) return true;
+
+            if (chordRegex.test(pLimpia)) {
+                cantidadAcordes++;
+                return true;
+            }
+            return false;
+        });
+
+        if (esLineaAcordes && cantidadAcordes > 0 && !mostrarAcordes) {
+            return null;
+        }
+
+        if (esLineaAcordes && cantidadAcordes > 0 && mostrarAcordes && tonoDelta !== 0) {
+            return linea.split(/(\s+|-|\(|\)|\[|\]|\||:|\.)/).map(fragmento => {
+                if (chordRegex.test(fragmento) && !etiquetasPermitidas.test(fragmento) && !/^[xX]\d+$/i.test(fragmento)) {
+                    return transponerAcorde(fragmento, tonoDelta);
+                }
+                return fragmento;
+            }).join('');
+        }
+        
+        return linea;
+    });
+
+    return lineasProcesadas.filter(linea => linea !== null).join('\n');
+  };
 
   const toggleFavorito = async (titulo) => {
     let nuevosFavs = favoritos.includes(titulo) ? favoritos.filter(f => f !== titulo) : [...favoritos, titulo];
@@ -121,14 +235,28 @@ export default function App() {
       return;
     }
 
-    let cancionesActuales = [...himnarioActual.canciones];
+    if (verPersonales && !himnarioActual) {
+      let cancionesActuales = [...cancionesPersonales];
+      if (indiceEditando !== null) {
+        cancionesActuales[indiceEditando] = { titulo: tituloEditando.trim(), letra: letraEditando.trim() };
+      } else {
+        cancionesActuales.push({ titulo: tituloEditando.trim(), letra: letraEditando.trim() });
+      }
+      setCancionesPersonales(cancionesActuales);
+      await AsyncStorage.setItem('cancionesPersonales', JSON.stringify(cancionesActuales));
+      setModalCancionVisible(false);
+      setTituloEditando('');
+      setLetraEditando('');
+      setIndiceEditando(null);
+      return;
+    }
 
+    let cancionesActuales = [...himnarioActual.canciones];
     if (indiceEditando !== null) {
       cancionesActuales[indiceEditando] = { titulo: tituloEditando.trim(), letra: letraEditando.trim() };
     } else {
       cancionesActuales.push({ titulo: tituloEditando.trim(), letra: letraEditando.trim() });
     }
-
     const himnarioActualizado = { ...himnarioActual, canciones: cancionesActuales };
     setHimnarioActual(himnarioActualizado);
     setModalCancionVisible(false);
@@ -138,10 +266,28 @@ export default function App() {
 
     try {
       await setDoc(doc(db, 'himnarios', himnarioActualizado.id), himnarioActualizado);
-      Alert.alert("Éxito", "Cambios guardados correctamente.");
-    } catch (error) {
-      Alert.alert("Error", "No se pudo sincronizar con la base de datos.");
+      Alert.alert("Éxito", "Cambios guardados en la biblioteca global.");
+    } catch (error) {}
+  };
+
+  const guardarNuevoNombreHimnario = async () => {
+    if (!nuevoNombreHimnario.trim()) {
+      Alert.alert("Error", "El nombre de la carpeta no puede estar vacío.");
+      return;
     }
+    try {
+      const himnarioActualizado = { 
+        ...himnarioSeleccionado, 
+        titulo: nuevoNombreHimnario.trim(),
+        claveAcceso: nuevaClaveHimnario.trim()
+      };
+      await setDoc(doc(db, 'himnarios', himnarioActualizado.id), himnarioActualizado);
+      setModalRenombrarVisible(false);
+      setHimnarioSeleccionado(null);
+      setNuevoNombreHimnario('');
+      setNuevaClaveHimnario('');
+      Alert.alert("Éxito", "Carpeta actualizada.");
+    } catch (error) {}
   };
 
   const eliminarCancion = (indexReal) => {
@@ -154,16 +300,44 @@ export default function App() {
           text: "Borrar", 
           style: "destructive", 
           onPress: async () => {
+            if (verPersonales && !himnarioActual) {
+              const nuevas = cancionesPersonales.filter((_, i) => i !== indexReal);
+              setCancionesPersonales(nuevas);
+              await AsyncStorage.setItem('cancionesPersonales', JSON.stringify(nuevas));
+              if (cancionActual) setCancionActual(null);
+              return;
+            }
+
             const nuevasCanciones = himnarioActual.canciones.filter((_, i) => i !== indexReal);
             const himnarioActualizado = { ...himnarioActual, canciones: nuevasCanciones };
             setHimnarioActual(himnarioActualizado);
             if (cancionActual) setCancionActual(null);
-            
             try {
               await setDoc(doc(db, 'himnarios', himnarioActualizado.id), himnarioActualizado);
-              Alert.alert("Eliminado", "La canción ha sido borrada.");
+            } catch (error) {}
+          } 
+        }
+      ]
+    );
+  };
+
+  const eliminarHimnario = (id, titulo) => {
+    Alert.alert(
+      "Eliminar Carpeta",
+      `¿Estás seguro de que deseas borrar completamente la carpeta "${titulo}" y todas sus canciones? Esta acción no se puede deshacer.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Borrar", 
+          style: "destructive", 
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'himnarios', id));
+              if (himnarioActual && himnarioActual.id === id) {
+                setHimnarioActual(null);
+              }
             } catch (error) {
-              Alert.alert("Error", "No se pudo eliminar en la base de datos.");
+              Alert.alert("Error", "No se pudo eliminar la carpeta en la base de datos.");
             }
           } 
         }
@@ -207,90 +381,71 @@ export default function App() {
       try {
         const himnarioRef = doc(db, 'himnarios', himnarioId);
         await setDoc(himnarioRef, { logoUrl: uriImagen }, { merge: true });
-        
         if (himnarioActual && himnarioActual.id === himnarioId) {
           setHimnarioActual(prev => ({ ...prev, logoUrl: uriImagen }));
         }
         setModalLogoVisible(false);
-        Alert.alert("Éxito", "Logo del coro actualizado correctamente.");
-      } catch (error) {
-        Alert.alert("Error", "No se pudo actualizar el logo en la base de datos.");
-      }
+      } catch (error) {}
     }
   };
 
-  const seleccionarArchivo = async () => {
+  const seleccionarArchivo = async (esLocal = false) => {
     try {
       const resultado = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        type: '*/*',
         copyToCacheDirectory: true,
       });
-
       if (resultado.canceled) return;
-      subirAlServidor(resultado.assets[0]);
-    } catch (error) {
-      Alert.alert("Error", "No se pudo seleccionar el archivo.");
-    }
+      subirAlServidor(resultado.assets[0], esLocal);
+    } catch (error) {}
   };
 
-  const subirAlServidor = async (archivo) => {
-    setCargando(true);
-    let tipoArchivo = archivo.mimeType || 'application/octet-stream';
-    const nombreOriginal = archivo.name;
-    const nombreMinusculas = nombreOriginal.toLowerCase();
-    
-    if (nombreMinusculas.endsWith('.pdf')) {
-      tipoArchivo = 'application/pdf';
-    } else if (nombreMinusculas.endsWith('.docx') || nombreMinusculas.endsWith('.doc')) {
-      tipoArchivo = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    }
-
+  const subirAlServidor = async (archivo, esLocal = false) => {
+    setSubiendoArchivo(true);
+    const nombreOriginal = archivo.name || "documento.pdf";
     const tituloLimpio = nombreOriginal.replace(/\.[^/.]+$/, "");
 
     try {
-      const url = 'https://cancionerobackend.onrender.com/procesar-documento/';
-      const response = await FileSystem.uploadAsync(url, archivo.uri, {
-        fieldName: 'file',
-        httpMethod: 'POST',
-        uploadType: 1, 
-        mimeType: tipoArchivo, 
+      const formData = new FormData();
+      if (archivo.file) {
+        formData.append('file', archivo.file);
+      } else {
+        const response = await fetch(archivo.uri);
+        const blob = await response.blob();
+        formData.append('file', blob, nombreOriginal);
+      }
+
+      const resServidor = await fetch('https://cancionerobackend.onrender.com/procesar-documento/', {
+        method: 'POST',
+        body: formData,
       });
 
-      const data = JSON.parse(response.body);
-      
-      if (response.status !== 200) {
-        throw new Error(data.detail || `Error del servidor: ${response.status}`);
-      }
+      const data = await resServidor.json();
+      if (!resServidor.ok) throw new Error(data.detail || `Error del servidor: ${resServidor.status}`);
       
       if (data.canciones) {
-        let himnarioGuardar;
-
-        if (himnarioActual) {
-          himnarioGuardar = {
-            ...himnarioActual,
-            canciones: [...himnarioActual.canciones, ...data.canciones]
-          };
-          setHimnarioActual(himnarioGuardar); 
-          Alert.alert("Completado", `Se agregaron ${data.canciones.length} canciones nuevas.`);
+        if (esLocal) {
+          const nuevasPersonales = [...cancionesPersonales, ...data.canciones];
+          setCancionesPersonales(nuevasPersonales);
+          await AsyncStorage.setItem('cancionesPersonales', JSON.stringify(nuevasPersonales));
+          Alert.alert("Completado", `Se agregaron ${data.canciones.length} oportunidades.`);
         } else {
-          himnarioGuardar = {
-            id: Date.now().toString(),
-            titulo: tituloLimpio,
-            logoUrl: "",
-            canciones: data.canciones
-          };
-          Alert.alert("Completado", `Se guardó el himnario "${tituloLimpio}" con ${data.canciones.length} canciones.`);
+          let himnarioGuardar;
+          if (himnarioActual) {
+            himnarioGuardar = { ...himnarioActual, canciones: [...himnarioActual.canciones, ...data.canciones] };
+            setHimnarioActual(himnarioGuardar); 
+            Alert.alert("Completado", `Se agregaron ${data.canciones.length} canciones nuevas.`);
+          } else {
+            himnarioGuardar = { id: Date.now().toString(), titulo: tituloLimpio, logoUrl: "", canciones: data.canciones, claveAcceso: "" };
+            Alert.alert("Completado", `Se guardó la carpeta "${tituloLimpio}".`);
+          }
+          await setDoc(doc(db, 'himnarios', himnarioGuardar.id), himnarioGuardar);
         }
-
-        await setDoc(doc(db, 'himnarios', himnarioGuardar.id), himnarioGuardar);
-
-      } else {
-        Alert.alert("Error de procesamiento", "El servidor no devolvió canciones.");
-      }
+      } 
     } catch (error) {
-      Alert.alert("Fallo de conexión", `Detalle: ${error.message}`);
+      Alert.alert("Fallo", `Detalle: ${error.message}`);
     } finally {
-      setCargando(false);
+      setSubiendoArchivo(false); 
     }
   };
 
@@ -308,16 +463,37 @@ export default function App() {
   if (errorCritico) {
     return (
       <SafeAreaView style={[styles.container, {justifyContent: 'center', alignItems: 'center'}]}>
-        <Text style={{color: '#ff5252', fontSize: 18, textAlign: 'center', marginBottom: 20}}>⚠️ Error al iniciar la app:</Text>
+        <Text style={{color: '#ff5252', fontSize: 18, textAlign: 'center', marginBottom: 20}}>⚠️ Error:</Text>
         <Text style={{color: '#fff', fontSize: 14, textAlign: 'center', marginBottom: 20}}>{errorCritico}</Text>
         <Button title="Reintentar" color="#03dac6" onPress={() => setErrorCritico(null)} />
       </SafeAreaView>
     );
   }
 
+  if (mostrarSaludo) {
+    return (
+      <SafeAreaView style={[styles.container, {justifyContent: 'center', alignItems: 'center'}]}>
+        <Text style={{fontSize: 34, fontWeight: 'bold', color: '#bb86fc', marginBottom: 30, textAlign: 'center'}}>
+          Dios Te Bendiga
+        </Text>
+        <ActivityIndicator size="large" color="#03dac6" />
+        <Text style={{position: 'absolute', bottom: 40, color: '#888', fontSize: 14, textAlign: 'center'}}>
+          Creador de la aplicación:{'\n'}Gerson Aquevedo Pérez
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* ENCABEZADO */}
+      
+      {subiendoArchivo && (
+        <View style={styles.overlayCarga}>
+          <ActivityIndicator size="large" color="#03dac6" />
+          <Text style={styles.textoCarga}>Procesando documento...</Text>
+        </View>
+      )}
+
       <View style={styles.headerTop}>
         <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
           {himnarioActual?.logoUrl ? (
@@ -331,45 +507,113 @@ export default function App() {
           ) : null}
           
           <Text style={[styles.headerTitle, himnarioActual?.logoUrl && { marginLeft: 10 }]} numberOfLines={1}>
-            {himnarioActual ? himnarioActual.titulo : "Biblioteca"}
+            {himnarioActual ? himnarioActual.titulo : "CancioneroApp"}
           </Text>
         </View>
 
-        <TouchableOpacity onPress={() => modoEdicion ? setModoEdicion(false) : setModalVisible(true)}>
-          <Text style={styles.btnDesbloquear}>{modoEdicion ? "🔓 Salir" : "🔒"}</Text>
-        </TouchableOpacity>
+        {!verPersonales && (
+          <TouchableOpacity onPress={() => modoEdicion ? setModoEdicion(false) : setModalVisible(true)}>
+            <Text style={styles.btnDesbloquear}>{modoEdicion ? "🔓 Salir" : "🔒"}</Text>
+          </TouchableOpacity>
+        )}
       </View>
+
+      {!cargando && !cancionActual && !himnarioActual && (
+        <View style={styles.selectorSeccion}>
+          <TouchableOpacity style={[styles.btnSeccion, !verPersonales && styles.btnSeccionActivo]} onPress={() => setVerPersonales(false)}>
+            <Text style={[styles.textoSeccion, !verPersonales && styles.textoSeccionActivo]}>📚 Globales</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.btnSeccion, verPersonales && styles.btnSeccionActivo]} onPress={() => setVerPersonales(true)}>
+            <Text style={[styles.textoSeccion, verPersonales && styles.textoSeccionActivo]}>🎤 Mis Oportunidades</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       
-      {cargando ? <ActivityIndicator size="large" color="#03dac6" /> : cancionActual ? (
+      {cargando && himnarios.length === 0 ? <ActivityIndicator size="large" color="#03dac6" /> : cancionActual ? (
         <View style={styles.vistaCancion}>
+          
           <View style={styles.headerVistaCancion}>
             <TouchableOpacity style={styles.btnVolver} onPress={() => setCancionActual(null)}>
               <Text style={styles.btnVolverTexto}>⬅ Volver</Text>
             </TouchableOpacity>
             
-            <View style={{flexDirection: 'row', alignItems: 'center'}}>
-              {modoEdicion && (
-                <TouchableOpacity style={[styles.btnZoom, {backgroundColor: '#bb86fc'}]} onPress={() => {
-                  const idxReal = himnarioActual.canciones.findIndex(c => c.titulo === cancionActual.titulo);
+            {(modoEdicion || (verPersonales && !himnarioActual)) && (
+                <TouchableOpacity style={[styles.btnZoom, {backgroundColor: '#bb86fc', alignSelf: 'center'}]} onPress={() => {
+                  let idxReal;
+                  if (verPersonales && !himnarioActual) {
+                    idxReal = cancionesPersonales.findIndex(c => c.titulo === cancionActual.titulo);
+                  } else {
+                    idxReal = himnarioActual.canciones.findIndex(c => c.titulo === cancionActual.titulo);
+                  }
                   abrirModalCrearOEditar(cancionActual, idxReal);
                 }}>
                   <Text style={[styles.btnZoomText, {color: '#000'}]}>✏️ Editar</Text>
                 </TouchableOpacity>
-              )}
+            )}
+          </View>
+
+          <View style={styles.controlesSuperiores}>
+            {verAcordes && (
               <View style={styles.zoomContainer}>
-                <TouchableOpacity style={styles.btnZoom} onPress={() => setFontSize(prev => Math.max(12, prev - 2))}>
-                  <Text style={styles.btnZoomText}>A-</Text>
+                <TouchableOpacity style={styles.btnZoom} onPress={() => setTonoDelta(prev => prev - 1)}>
+                  <Text style={styles.btnZoomText}>-½ Tono</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.btnZoom} onPress={() => setFontSize(prev => Math.min(32, prev + 2))}>
-                  <Text style={styles.btnZoomText}>A+</Text>
+                <View style={styles.indicadorTono}>
+                  <Text style={{color: '#03dac6', fontWeight: 'bold'}}>{tonoDelta > 0 ? `+${tonoDelta}` : tonoDelta}</Text>
+                </View>
+                <TouchableOpacity style={styles.btnZoom} onPress={() => setTonoDelta(prev => prev + 1)}>
+                  <Text style={styles.btnZoomText}>+½ Tono</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            )}
           </View>
+
           <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={styles.tituloCompleto}>{cancionActual.titulo}</Text>
-            <Text style={[styles.lineaLetra, { fontSize: fontSize }]}>{cancionActual.letra}</Text>
+            <View style={{ alignItems: 'flex-start', width: '100%', paddingHorizontal: 5 }}>
+              {/* AQUÍ INYECTAMOS LA CONDICIÓN DE PLATAFORMA PARA QUE LA WEB RESPETE LOS ESPACIOS */}
+              <Text style={[
+                styles.lineaLetra, 
+                { fontSize: fontSize },
+                Platform.OS === 'web' ? { whiteSpace: 'pre-wrap' } : {}
+              ]}>
+                {procesarLetraConAcordes(cancionActual.letra, verAcordes)}
+              </Text>
+            </View>
+            <View style={{height: 100}}/>
           </ScrollView>
+
+          <View style={styles.fabVistaContainer}>
+            {menuFlotanteVisible && (
+              <View style={styles.menuFlotante}>
+                <TouchableOpacity 
+                  style={[styles.btnZoomFlotante, {backgroundColor: verAcordes ? '#03dac6' : '#444', marginBottom: 15}]} 
+                  onPress={() => setVerAcordes(!verAcordes)}
+                >
+                  <Text style={[styles.btnZoomText, {color: verAcordes ? '#000' : '#fff'}]}>
+                    {verAcordes ? '🎵 Acordes' : '📖 Letra'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
+                  <TouchableOpacity style={[styles.btnZoomFlotante, {flex: 1, marginRight: 5}]} onPress={() => setFontSize(prev => Math.max(12, prev - 2))}>
+                    <Text style={styles.btnZoomText}>A-</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.btnZoomFlotante, {flex: 1, marginLeft: 5}]} onPress={() => setFontSize(prev => Math.min(32, prev + 2))}>
+                    <Text style={styles.btnZoomText}>A+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+            
+            <TouchableOpacity 
+              style={styles.fabVista} 
+              onPress={() => setMenuFlotanteVisible(!menuFlotanteVisible)}
+            >
+              <Text style={{fontSize: 26}}>{menuFlotanteVisible ? '✖️' : '⚙️'}</Text>
+            </TouchableOpacity>
+          </View>
+          
         </View>
       ) : himnarioActual ? (
         <View style={{ flex: 1 }}>
@@ -423,10 +667,47 @@ export default function App() {
             )} 
           />
         </View>
+      ) : verPersonales ? (
+        <View style={{ flex: 1 }}>
+          <Text style={{color: '#aaa', textAlign: 'center', marginBottom: 15}}>
+            Privado: Estas canciones solo se guardan en tu celular.
+          </Text>
+          {cancionesPersonales.length === 0 ? (
+            <Text style={{color: '#555', textAlign: 'center', marginTop: 50}}>Aún no tienes oportunidades guardadas.</Text>
+          ) : (
+            <FlatList 
+              data={cancionesPersonales.map((c, i) => ({ ...c, numeroOriginal: i + 1, indexReal: i }))} 
+              keyExtractor={(item, index) => index.toString()} 
+              renderItem={({ item }) => (
+                <View style={styles.itemIndice}>
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => setCancionActual(item)}>
+                    <Text style={styles.tituloIndice}>{item.numeroOriginal}. {item.titulo}</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity onPress={() => abrirModalCrearOEditar(item, item.indexReal)} style={{paddingHorizontal: 8}}>
+                    <Text style={{fontSize: 18}}>✏️</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={() => eliminarCancion(item.indexReal)} style={{paddingHorizontal: 8}}>
+                    <Text style={{fontSize: 18}}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+              )} 
+            />
+          )}
+        </View>
       ) : (
         <FlatList data={himnarios} keyExtractor={(item) => item.id} renderItem={({ item }) => (
           <View style={styles.tarjetaHimnario}>
-            <TouchableOpacity style={styles.btnHimnario} onPress={() => { setHimnarioActual(item); setIndiceUltimaCancion(0); }}>
+            <TouchableOpacity style={styles.btnHimnario} onPress={() => { 
+              if (item.claveAcceso && item.claveAcceso.trim() !== '' && !modoEdicion) {
+                setHimnarioPendiente(item);
+                setModalClaveCarpetaVisible(true);
+              } else {
+                setHimnarioActual(item); 
+                setIndiceUltimaCancion(0); 
+              }
+            }}>
               <View style={{flexDirection: 'row', alignItems: 'center'}}>
                 {item.logoUrl ? (
                   <TouchableOpacity onPress={() => manejarToqueLogo(item)}>
@@ -437,36 +718,146 @@ export default function App() {
                     <Text style={{color: '#03dac6', fontSize: 14, fontWeight: 'bold'}}>🎵</Text>
                   </View>
                 )}
-                <Text style={[styles.tituloHimnario, {marginLeft: 15}]}>{item.titulo}</Text>
+                <Text style={[styles.tituloHimnario, {marginLeft: 15, marginRight: modoEdicion ? 130 : 0}]}>
+                  {item.titulo} {item.claveAcceso && !modoEdicion ? '🔒' : ''}
+                </Text>
               </View>
             </TouchableOpacity>
 
             {modoEdicion && (
-              <TouchableOpacity style={styles.btnCambiarLogoTarjeta} onPress={() => manejarToqueLogo(item)}>
-                <Text style={{color: '#03dac6', fontSize: 12, fontWeight: 'bold'}}>🖼️ Ver / Gestionar</Text>
-              </TouchableOpacity>
+              <View style={styles.botonesEdicionCarpeta}>
+                <TouchableOpacity style={styles.btnMiniAccion} onPress={() => {
+                  setHimnarioSeleccionado(item);
+                  setNuevoNombreHimnario(item.titulo);
+                  setNuevaClaveHimnario(item.claveAcceso || '');
+                  setModalRenombrarVisible(true);
+                }}>
+                  <Text style={{fontSize: 18}}>✏️</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.btnMiniAccion} onPress={() => {
+                  if (item.logoUrl) {
+                     setHimnarioSeleccionadoLogo(item);
+                     setModalLogoVisible(true);
+                  } else {
+                     cambiarLogo(item.id);
+                  }
+                }}>
+                  <Text style={{fontSize: 18}}>🖼️</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.btnMiniAccion} onPress={() => eliminarHimnario(item.id, item.titulo)}>
+                  <Text style={{fontSize: 18}}>🗑️</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         )} />
       )}
 
-      {/* BOTÓN FLOTANTE (FAB) */}
-      {modoEdicion && !cargando && !cancionActual && (
+      {!cancionActual && (
         <View style={{position: 'absolute', bottom: 45, right: 20, flexDirection: 'row'}}>
-          {himnarioActual && (
+          
+          {himnarioActual && modoEdicion && (
             <TouchableOpacity style={[styles.fab, {backgroundColor: '#03dac6', marginRight: 10}]} onPress={() => abrirModalCrearOEditar()}>
               <Text style={[styles.fabIcon, {color: '#000'}]}>+ Crear Canción</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.fab} onPress={seleccionarArchivo}>
-            <Text style={styles.fabIcon}>
-              {himnarioActual ? "+ Subir Archivo" : "+ Nuevo Himnario"}
-            </Text>
-          </TouchableOpacity>
+
+          {himnarioActual && modoEdicion && (
+            <TouchableOpacity style={styles.fab} onPress={() => seleccionarArchivo(false)}>
+              <Text style={styles.fabIcon}>+ Subir Archivo</Text>
+            </TouchableOpacity>
+          )}
+
+          {!himnarioActual && !verPersonales && modoEdicion && (
+            <TouchableOpacity style={styles.fab} onPress={() => seleccionarArchivo(false)}>
+              <Text style={styles.fabIcon}>+ Nuevo Himnario</Text>
+            </TouchableOpacity>
+          )}
+
+          {!himnarioActual && verPersonales && (
+            <>
+              <TouchableOpacity style={[styles.fab, {backgroundColor: '#bb86fc', marginRight: 10}]} onPress={() => abrirModalCrearOEditar()}>
+                <Text style={[styles.fabIcon, {color: '#000'}]}>+ Escribir</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.fab} onPress={() => seleccionarArchivo(true)}>
+                <Text style={styles.fabIcon}>+ Subir Archivo</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
         </View>
       )}
 
-      {/* MODAL CREAR O EDITAR CANCIÓN */}
+      <Modal visible={modalRenombrarVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalView}>
+            <Text style={styles.modalTitle}>Ajustes de Carpeta</Text>
+            
+            <Text style={{color: '#aaa', alignSelf: 'flex-start', marginBottom: 5}}>Nombre:</Text>
+            <TextInput 
+              style={styles.inputClave} 
+              value={nuevoNombreHimnario} 
+              onChangeText={setNuevoNombreHimnario} 
+              placeholder="Nombre de la iglesia..." 
+              placeholderTextColor="#888" 
+            />
+
+            <Text style={{color: '#aaa', alignSelf: 'flex-start', marginBottom: 5}}>Contraseña (Opcional):</Text>
+            <TextInput 
+              style={styles.inputClave} 
+              value={nuevaClaveHimnario} 
+              onChangeText={setNuevaClaveHimnario} 
+              placeholder="Dejar vacío para acceso libre" 
+              placeholderTextColor="#888" 
+            />
+
+            <View style={styles.modalButtons}>
+              <Button title="Cancelar" color="#ff5252" onPress={() => setModalRenombrarVisible(false)} />
+              <Button title="Guardar" color="#03dac6" onPress={guardarNuevoNombreHimnario} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={modalClaveCarpetaVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalView}>
+            <Text style={styles.modalTitle}>Carpeta Privada</Text>
+            <Text style={{color: '#aaa', textAlign: 'center', marginBottom: 15}}>
+              Este himnario está protegido. Ingresa la contraseña para verlo.
+            </Text>
+            <TextInput 
+              style={styles.inputClave} 
+              secureTextEntry 
+              value={claveCarpetaInput} 
+              onChangeText={setClaveCarpetaInput} 
+              placeholder="Contraseña..." 
+              placeholderTextColor="#888" 
+            />
+            <View style={styles.modalButtons}>
+              <Button title="Cancelar" color="#ff5252" onPress={() => {
+                setModalClaveCarpetaVisible(false);
+                setClaveCarpetaInput('');
+                setHimnarioPendiente(null);
+              }} />
+              <Button title="Entrar" color="#bb86fc" onPress={() => { 
+                if(claveCarpetaInput === himnarioPendiente?.claveAcceso) {
+                  setHimnarioActual(himnarioPendiente);
+                  setIndiceUltimaCancion(0);
+                  setModalClaveCarpetaVisible(false);
+                  setClaveCarpetaInput('');
+                  setHimnarioPendiente(null);
+                } else { 
+                  Alert.alert("Denegado", "La contraseña es incorrecta"); 
+                } 
+              }} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={modalCancionVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={[styles.modalView, {width: '90%', maxHeight: '85%'}]}>
@@ -499,7 +890,6 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* MODAL VER IMAGEN AMPLIADA */}
       <Modal visible={imagenAmpliada !== null} transparent animationType="fade">
         <View style={styles.modalOverlayVisor}>
           <TouchableOpacity style={styles.btnCerrarVisor} onPress={() => setImagenAmpliada(null)}>
@@ -511,7 +901,6 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* MODAL GESTIÓN DE LOGO */}
       <Modal visible={modalLogoVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalView}>
@@ -552,12 +941,21 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#121212', paddingHorizontal: 20 },
+  overlayCarga: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
+  textoCarga: { color: '#03dac6', marginTop: 15, fontSize: 18, fontWeight: 'bold' },
+  textoCargaSecundario: { color: '#aaa', marginTop: 5, fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+  selectorSeccion: { flexDirection: 'row', backgroundColor: '#1e1e1e', borderRadius: 8, padding: 4, marginBottom: 15, marginTop: 5 },
+  btnSeccion: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 6 },
+  btnSeccionActivo: { backgroundColor: '#333' },
+  textoSeccion: { color: '#888', fontWeight: 'bold', fontSize: 16 },
+  textoSeccionActivo: { color: '#03dac6' },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 15 },
   headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#bb86fc', flex: 1 },
   logoCoro: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: '#03dac6' },
   logoTarjeta: { width: 45, height: 45, borderRadius: 22.5, borderWidth: 1.5, borderColor: '#03dac6' },
   logoPlaceholder: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#03dac6', borderStyle: 'dashed' },
-  btnCambiarLogoTarjeta: { position: 'absolute', right: 15, top: 18, backgroundColor: '#252525', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: '#03dac6' },
+  botonesEdicionCarpeta: { position: 'absolute', right: 15, top: 15, flexDirection: 'row' },
+  btnMiniAccion: { backgroundColor: '#252525', padding: 8, borderRadius: 6, borderWidth: 1, borderColor: '#03dac6', marginLeft: 8 },
   btnDesbloquear: { fontSize: 20, color: '#03dac6', paddingLeft: 10 },
   tarjetaHimnario: { backgroundColor: '#1e1e1e', borderRadius: 12, marginBottom: 15, justifyContent: 'center' },
   btnHimnario: { padding: 15 },
@@ -567,15 +965,28 @@ const styles = StyleSheet.create({
   inputBusqueda: { backgroundColor: '#1e1e1e', color: '#fff', padding: 15, borderRadius: 8, marginBottom: 15, fontSize: 16 },
   btnVolver: { padding: 10, backgroundColor: '#333', borderRadius: 8, alignSelf: 'flex-start' },
   btnVolverTexto: { color: '#03dac6', fontWeight: 'bold' },
-  vistaCancion: { flex: 1, marginTop: 10 },
+  vistaCancion: { flex: 1, marginTop: 10, position: 'relative' },
   headerVistaCancion: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  zoomContainer: { flexDirection: 'row' },
-  btnZoom: { backgroundColor: '#333', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, marginLeft: 8 },
-  btnZoomText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  controlesSuperiores: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 10, paddingHorizontal: 5 },
+  zoomContainer: { flexDirection: 'row', marginHorizontal: 5, marginVertical: 5 },
+  btnZoom: { backgroundColor: '#333', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, marginLeft: 4 },
+  btnZoomText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  indicadorTono: { justifyContent: 'center', paddingHorizontal: 10, backgroundColor: '#222', borderRadius: 6, marginLeft: 4, borderWidth: 1, borderColor: '#333' },
   tituloCompleto: { fontSize: 24, color: '#bb86fc', textAlign: 'center', marginBottom: 20, fontWeight: 'bold' },
-  lineaLetra: { color: '#ccc', textAlign: 'center', lineHeight: 28 },
+  lineaLetra: { 
+    color: '#ccc', 
+    textAlign: 'left', 
+    lineHeight: 28, 
+    fontFamily: 'monospace'
+    // La regla pre-wrap ahora está inyectada directamente en el componente Text para asegurar compatibilidad en Web
+  },
   fab: { backgroundColor: '#bb86fc', padding: 15, borderRadius: 30, elevation: 5 },
   fabIcon: { color: '#000', fontWeight: 'bold', fontSize: 16 },
+  fabVistaContainer: { position: 'absolute', bottom: 20, right: 10, alignItems: 'flex-end' },
+  menuFlotante: { backgroundColor: '#252525', padding: 15, borderRadius: 12, marginBottom: 15, elevation: 5, borderWidth: 1, borderColor: '#333', width: 220 },
+  btnZoomFlotante: { backgroundColor: '#333', paddingVertical: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  fabVista: { backgroundColor: '#03dac6', width: 55, height: 55, borderRadius: 27.5, justifyContent: 'center', alignItems: 'center', elevation: 5 },
+  
   modalOverlay: { flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)', padding: 20 },
   modalOverlayVisor: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   btnCerrarVisor: { position: 'absolute', top: 40, right: 20, backgroundColor: '#333', padding: 10, borderRadius: 8, zIndex: 10 },

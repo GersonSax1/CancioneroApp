@@ -973,12 +973,12 @@ const styles = StyleSheet.create({
   btnZoomText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   indicadorTono: { justifyContent: 'center', paddingHorizontal: 10, backgroundColor: '#222', borderRadius: 6, marginLeft: 4, borderWidth: 1, borderColor: '#333' },
   tituloCompleto: { fontSize: 24, color: '#bb86fc', textAlign: 'center', marginBottom: 20, fontWeight: 'bold' },
-  lineaLetra: { 
+ lineaLetra: { 
     color: '#ccc', 
     textAlign: 'left', 
     lineHeight: 28, 
-    fontFamily: 'monospace'
-    // La regla pre-wrap ahora está inyectada directamente en el componente Text para asegurar compatibilidad en Web
+    // NUEVO: Le damos instrucciones estrictas a la web sobre qué fuentes exactas usar
+    fontFamily: Platform.OS === 'web' ? 'Consolas, "Courier New", monospace' : 'monospace'
   },
   fab: { backgroundColor: '#bb86fc', padding: 15, borderRadius: 30, elevation: 5 },
   fabIcon: { color: '#000', fontWeight: 'bold', fontSize: 16 },

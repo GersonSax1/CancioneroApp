@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Button, FlatList, Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, BackHandler, Button, FlatList, Image, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { collection, deleteDoc, doc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -57,6 +57,28 @@ export default function App() {
   const [indiceUltimaCancion, setIndiceUltimaCancion] = useState(0);
 
   const CLAVE_SECRETA = "alabanza2026"; 
+
+  // NUEVO: Lógica para arrastrar el botón flotante (PanResponder + Animated)
+  const pan = useRef(new Animated.ValueXY()).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      // Solo activar el modo "arrastrar" si el usuario mueve el dedo más de 10 píxeles. 
+      // Si es menos, se considera un "toque" (clic normal) para abrir el menú.
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10;
+      },
+      onPanResponderGrant: () => {
+        pan.extractOffset(); // Guarda la posición actual antes de arrastrar
+      },
+      onPanResponderMove: Animated.event(
+        [null, { dx: pan.x, dy: pan.y }],
+        { useNativeDriver: false } // false porque estamos moviendo layout en pantalla
+      ),
+      onPanResponderRelease: () => {
+        pan.flattenOffset(); // Fija la nueva posición donde soltó el dedo
+      }
+    })
+  ).current;
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -470,16 +492,17 @@ export default function App() {
     );
   }
 
+  // NUEVO DISEÑO PARA LA PANTALLA DE CARGA
   if (mostrarSaludo) {
     return (
       <SafeAreaView style={[styles.container, {justifyContent: 'center', alignItems: 'center'}]}>
-        <Text style={{fontSize: 34, fontWeight: 'bold', color: '#bb86fc', marginBottom: 30, textAlign: 'center'}}>
+        <Text style={{fontSize: 34, fontWeight: 'bold', color: '#bb86fc', marginBottom: 10, textAlign: 'center'}}>
           Dios Te Bendiga
         </Text>
-        <ActivityIndicator size="large" color="#03dac6" />
-        <Text style={{position: 'absolute', bottom: 40, color: '#888', fontSize: 14, textAlign: 'center'}}>
+        <Text style={{color: '#888', fontSize: 16, textAlign: 'center', marginBottom: 40}}>
           Creador de la aplicación:{'\n'}Gerson Aquevedo Pérez
         </Text>
+        <ActivityIndicator size="large" color="#03dac6" />
       </SafeAreaView>
     );
   }
@@ -571,7 +594,6 @@ export default function App() {
           <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={styles.tituloCompleto}>{cancionActual.titulo}</Text>
             <View style={{ alignItems: 'flex-start', width: '100%', paddingHorizontal: 5 }}>
-              {/* AQUÍ INYECTAMOS LA CONDICIÓN DE PLATAFORMA PARA QUE LA WEB RESPETE LOS ESPACIOS */}
               <Text style={[
                 styles.lineaLetra, 
                 { fontSize: fontSize },
@@ -583,7 +605,11 @@ export default function App() {
             <View style={{height: 100}}/>
           </ScrollView>
 
-          <View style={styles.fabVistaContainer}>
+          {/* CONTENEDOR FLOTANTE CON ANIMATED PARA PODER ARRASTRARLO */}
+          <Animated.View 
+            style={[styles.fabVistaContainer, { transform: [{ translateX: pan.x }, { translateY: pan.y }] }]}
+            {...panResponder.panHandlers}
+          >
             {menuFlotanteVisible && (
               <View style={styles.menuFlotante}>
                 <TouchableOpacity 
@@ -612,7 +638,7 @@ export default function App() {
             >
               <Text style={{fontSize: 26}}>{menuFlotanteVisible ? '✖️' : '⚙️'}</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
           
         </View>
       ) : himnarioActual ? (
@@ -973,11 +999,10 @@ const styles = StyleSheet.create({
   btnZoomText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   indicadorTono: { justifyContent: 'center', paddingHorizontal: 10, backgroundColor: '#222', borderRadius: 6, marginLeft: 4, borderWidth: 1, borderColor: '#333' },
   tituloCompleto: { fontSize: 24, color: '#bb86fc', textAlign: 'center', marginBottom: 20, fontWeight: 'bold' },
- lineaLetra: { 
+  lineaLetra: { 
     color: '#ccc', 
     textAlign: 'left', 
     lineHeight: 28, 
-    // NUEVO: Le damos instrucciones estrictas a la web sobre qué fuentes exactas usar
     fontFamily: Platform.OS === 'web' ? 'Consolas, "Courier New", monospace' : 'monospace'
   },
   fab: { backgroundColor: '#bb86fc', padding: 15, borderRadius: 30, elevation: 5 },

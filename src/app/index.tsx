@@ -58,24 +58,27 @@ export default function App() {
 
   const CLAVE_SECRETA = "alabanza2026"; 
 
-  // NUEVO: Lógica para arrastrar el botón flotante (PanResponder + Animated)
+  // Lógica de arrastre MEJORADA para soportar mouse en Google Chrome / Web
   const pan = useRef(new Animated.ValueXY()).current;
   const panResponder = useRef(
     PanResponder.create({
-      // Solo activar el modo "arrastrar" si el usuario mueve el dedo más de 10 píxeles. 
-      // Si es menos, se considera un "toque" (clic normal) para abrir el menú.
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10;
+      // Usamos "Capture" para interceptar el movimiento del mouse antes de que haga clic
+      onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5;
       },
       onPanResponderGrant: () => {
-        pan.extractOffset(); // Guarda la posición actual antes de arrastrar
+        pan.extractOffset();
       },
       onPanResponderMove: Animated.event(
         [null, { dx: pan.x, dy: pan.y }],
-        { useNativeDriver: false } // false porque estamos moviendo layout en pantalla
+        { useNativeDriver: false }
       ),
       onPanResponderRelease: () => {
-        pan.flattenOffset(); // Fija la nueva posición donde soltó el dedo
+        pan.flattenOffset();
+      },
+      // Terminamos la animación de forma segura si el mouse se sale de la ventana del navegador
+      onPanResponderTerminate: () => {
+        pan.flattenOffset();
       }
     })
   ).current;
@@ -492,7 +495,6 @@ export default function App() {
     );
   }
 
-  // NUEVO DISEÑO PARA LA PANTALLA DE CARGA
   if (mostrarSaludo) {
     return (
       <SafeAreaView style={[styles.container, {justifyContent: 'center', alignItems: 'center'}]}>
@@ -605,9 +607,13 @@ export default function App() {
             <View style={{height: 100}}/>
           </ScrollView>
 
-          {/* CONTENEDOR FLOTANTE CON ANIMATED PARA PODER ARRASTRARLO */}
+          {/* AQUÍ ESTÁ EL TRUCO: Agregamos estilos específicos de la web para bloquear la selección y el scroll */}
           <Animated.View 
-            style={[styles.fabVistaContainer, { transform: [{ translateX: pan.x }, { translateY: pan.y }] }]}
+            style={[
+              styles.fabVistaContainer, 
+              { transform: [{ translateX: pan.x }, { translateY: pan.y }] },
+              Platform.OS === 'web' ? { touchAction: 'none', userSelect: 'none' } : {} 
+            ]}
             {...panResponder.panHandlers}
           >
             {menuFlotanteVisible && (
